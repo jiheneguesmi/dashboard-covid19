@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carte COVID-19 (Worldometer + Évolution)</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Roboto', sans-serif; }
+    .tooltip {
+      position: absolute;
+      background: white;
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      pointer-events: none;
+      box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.1);
+      visibility: hidden;
+    }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 1rem;
+    }
+    .legend-bar {
+      background: linear-gradient(to right, #fff5f0, #67000d);
+      height: 12px;
+      flex-grow: 1;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-[#f4f4f9] text-gray-800">
+  <div class="flex">
+    <div id="nav"></div>
+    <main class="ml-64 p-10 w-full">
+      <h1 class="text-2xl font-bold text-blue-600 mb-6">Carte mondiale COVID-19 avec Évolution</h1>
+
+      <!-- Carte -->
+      <div class="bg-white p-6 rounded shadow relative mb-6">
+        <div class="flex flex-wrap gap-4 items-center mb-4">
+          <select id="metric-select" class="border rounded p-2">
+            <option value="TotalCases">Cas Confirmés</option>
+            <option value="TotalDeaths">Décès</option>
+            <option value="TotalRecovered">Guérisons</option>
+          </select>
+        </div>
+        <svg id="map" width="960" height="500"></svg>
+        <div id="tooltip" class="tooltip"></div>
+        <div class="legend">
+          <span class="text-xs">Faible</span>
+          <div class="legend-bar"></div>
+          <span class="text-xs">Élevé</span>
+        </div>
+      </div>
+
+      <!-- Évolution Bar Chart -->
+      <div class="bg-white p-6 rounded shadow relative">
+        <div class="mb-4 flex items-center gap-4">
+          <label for="date-slider" class="font-semibold">Jour :</label>
+          <input type="range" id="date-slider" class="w-60" min="0" max="0" value="0">
+          <span id="date-label" class="text-sm text-gray-600">Date</span>
+          <button id="autoplay-btn" class="bg-blue-600 text-white px-4 py-1 rounded hover:bg-blue-700 text-sm">▶️ Lecture</button>
+        </div>
+        <canvas id="covid-chart"></canvas>
+        <p class="text-sm text-gray-500 mt-2">Ce graphique présente l'évolution globale des cas confirmés, décès et guérisons à la date sélectionnée.</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    fetch('nav.html').then(res => res.text()).then(html => document.getElementById('nav').innerHTML = html);
+
+    const svg = d3.select("#map"),
+          tooltip = d3.select("#tooltip"),
+          width = 960, height = 500,
+          projection = d3.geoNaturalEarth1().scale(160).translate([width / 2, height / 2]),
+          path = d3.geoPath().projection(projection);
+
+    let covidMap = {}, countries, dates, currentMetric = "TotalCases", dayWiseData, chartInstance;
+    let autoplay = false, autoplayInterval;
+
+    const countryNameMap = {
+      "Bosnia and Herz.": "Bosnia",
+      "Côte d'Ivoire": "Cote d'Ivoire",
+      "Dem. Rep. Congo": "DRC",
+      "Dominican Rep.": "Dominican Republic",
+      "Central African Rep.": "CAR",
+      "Fr. S. Antarctic Lands": "French Southern Territories",
+      "United States": "USA",
+      "United States of America": "USA",
+      "United Kingdom": "UK",
+      "South Korea": "S. Korea",
+      "North Macedonia": "Macedonia",
+      "Democratic Republic of the Congo": "DRC",
+      "Republic of the Congo": "Congo",
+      "Ivory Coast": "Cote d'Ivoire",
+      "Czech Republic": "Czechia",
+      "Myanmar": "Burma",
+      "Russian Federation": "Russia",
+      "Iran (Islamic Republic of)": "Iran",
+      "Venezuela (Bolivarian Republic of)": "Venezuela",
+      "Tanzania, United Republic of": "Tanzania",
+      "Brunei Darussalam": "Brunei",
+      "Moldova (Republic of)": "Moldova",
+      "Palestine, State of": "Palestine",
+      "Korea, Republic of": "S. Korea"
+    };
+
+    Promise.all([
+      d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"),
+      d3.csv("data/worldometer_data.csv"),
+      d3.csv("data/day_wise.csv")
+    ]).then(([world, covidData, dayData]) => {
+      countries = topojson.feature(world, world.objects.countries).features;
+      dayWiseData = dayData;
+
+      covidData.forEach(d => {
+        covidMap[d["Country/Region"].trim()] = {
+          TotalCases: +d.TotalCases,
+          TotalDeaths: +d.TotalDeaths,
+          TotalRecovered: +d.TotalRecovered
+        };
+      });
+
+      dates = dayData.map(d => d.Date);
+      const slider = document.getElementById("date-slider");
+      slider.max = dates.length - 1;
+
+      slider.addEventListener("input", () => updateVisuals(+slider.value));
+      document.getElementById("metric-select").onchange = e => {
+        currentMetric = e.target.value;
+        updateMap();
+      };
+
+      document.getElementById("autoplay-btn").addEventListener("click", () => {
+        autoplay = !autoplay;
+        const btn = document.getElementById("autoplay-btn");
+        if (autoplay) {
+          btn.textContent = "⏸️ Pause";
+          autoplayInterval = setInterval(() => {
+            if (+slider.value < +slider.max) {
+              slider.value = +slider.value + 1;
+              updateVisuals(+slider.value);
+            } else {
+              autoplay = false;
+              clearInterval(autoplayInterval);
+              btn.textContent = "▶️ Lecture";
+            }
+          }, 1000);
+        } else {
+          clearInterval(autoplayInterval);
+          btn.textContent = "▶️ Lecture";
+        }
+      });
+
+      updateVisuals(0);
+    });
+
+    function updateVisuals(index) {
+      const date = dates[index];
+      document.getElementById("date-label").textContent = date;
+      updateMap();
+      updateChart(date);
+    }
+
+    function updateMap() {
+      const color = d3.scaleSequential(d3.interpolateReds)
+                      .domain([0, d3.max(Object.values(covidMap), d => d[currentMetric])]);
+
+      svg.selectAll("path")
+        .data(countries)
+        .join("path")
+        .attr("d", path)
+        .attr("fill", d => {
+          const name = countryNameMap[d.properties.name] || d.properties.name;
+          return color(covidMap[name]?.[currentMetric] || 0);
+        })
+        .attr("stroke", "#ccc")
+        .on("mouseover", (event, d) => {
+          const country = countryNameMap[d.properties.name] || d.properties.name;
+          const value = covidMap[country]?.[currentMetric] || 0;
+          tooltip.style("visibility", "visible")
+                 .html(`<strong>${country}</strong><br>${currentMetric}: ${value.toLocaleString()}`);
+        })
+        .on("mousemove", e => tooltip.style("top", `${e.pageY - 30}px`).style("left", `${e.pageX + 15}px`))
+        .on("mouseout", () => tooltip.style("visibility", "hidden"));
+    }
+    let previousValues = [0, 0, 0]; // valeurs initiales
+
+function updateChart(date) {
+  const d = dayWiseData.find(row => row.Date === date);
+  const newValues = [+d.Confirmed, +d.Deaths, +d.Recovered];
+
+  if (!chartInstance) {
+    chartInstance = new Chart("covid-chart", {
+      type: "bar",
+      data: {
+        labels: ["Confirmés", "Décès", "Guérisons"],
+        datasets: [{
+          label: `Données pour le ${date}`,
+          data: newValues,
+          backgroundColor: ['#FF5733', '#C70039', '#28A745'],
+          borderRadius: 6,
+          hoverOffset: 10
+        }]
+      },
+      options: {
+        responsive: true,
+        animation: {
+          duration: 1000,
+          easing: 'easeOutQuart'
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            onClick: (e, legendItem, legend) => {
+              const index = legendItem.datasetIndex;
+              const ci = legend.chart;
+              const meta = ci.getDatasetMeta(index);
+              meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
+              ci.update();
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.label} : ${ctx.formattedValue}`
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: value => value.toLocaleString()
+            }
+          }
+        }
+      }
+    });
+  } else {
+    chartInstance.data.datasets[0].data = newValues;
+    chartInstance.data.datasets[0].label = `Données pour le ${date}`;
+    chartInstance.update();
+  }
+
+  previousValues = newValues;
+}
+
+  </script>
+</body>
+</html>

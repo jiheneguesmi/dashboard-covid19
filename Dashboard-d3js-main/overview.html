@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vue Globale - COVID-19</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Roboto', sans-serif; }
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 6px 10px;
+      font-size: 14px;
+      pointer-events: none;
+      visibility: hidden;
+      box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+    }
+    #countries-affected {
+  background: linear-gradient(to top left, #fdfbff, #f4f4f9);
+}
+
+  </style>
+</head>
+<body class="bg-[#f4f4f9] text-gray-800">
+  <div class="flex">
+    <div id="nav"></div>
+    <main class="ml-64 p-10 w-full">
+      <h1 class="text-2xl font-bold text-blue-600 mb-6">Vue Globale par Continent</h1>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div id="total-cases" class="bg-white p-6 rounded shadow relative">
+          <h2 class="text-lg font-semibold text-blue-600 mb-2">Total des cas confirmés</h2>
+          <p class="text-sm text-gray-600 mb-2">Nombre cumulé de cas confirmés de COVID-19 par continent.</p>
+        </div>
+        <div id="total-deaths" class="bg-white p-6 rounded shadow relative">
+          <h2 class="text-lg font-semibold text-red-600 mb-2">Total des décès</h2>
+          <p class="text-sm text-gray-600 mb-2">Nombre total de décès signalés dus au COVID-19 par continent.</p>
+        </div>
+        <div id="total-recovered" class="bg-white p-6 rounded shadow relative">
+          <h2 class="text-lg font-semibold text-green-600 mb-2">Total des guérisons</h2>
+          <p class="text-sm text-gray-600 mb-2">Nombre total de personnes rétablies du COVID-19 par continent.</p>
+        </div>
+        <div id="continent-comparison" class="bg-white p-6 rounded shadow relative">
+          <h2 class="text-lg font-semibold text-indigo-600 mb-2">Comparaison globale</h2>
+          <p class="text-sm text-gray-600 mb-2">Comparaison visuelle des cas, décès et guérisons entre continents.</p>
+        </div>
+
+        <!-- 🔥 NOUVEAU GRAPHIQUE -->
+        <div id="countries-affected" class="bg-white p-6 rounded shadow relative col-span-2">
+          <h2 class="text-lg font-semibold text-purple-600 mb-2">Évolution des pays affectés</h2>
+          <p class="text-sm text-gray-600 mb-2">Nombre de pays avec au moins un cas confirmé, jour par jour.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    fetch('nav.html')
+      .then(res => res.text())
+      .then(data => {
+        document.getElementById('nav').innerHTML = data;
+      });
+
+    const margin = { top: 40, right: 30, bottom: 60, left: 60 },
+          width = 350,
+          height = 250;
+
+    const tooltip = d3.select("#tooltip");
+
+    const charts = [
+      { id: "total-cases", field: "TotalCases", color: "#4a90e2" },
+      { id: "total-deaths", field: "TotalDeaths", color: "#e74c3c" },
+      { id: "total-recovered", field: "TotalRecovered", color: "#2ecc71" }
+    ];
+
+    charts.forEach(chart => {
+      const svg = d3.select(`#${chart.id}`)
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      d3.csv("data/worldometer_data.csv").then(data => {
+        data.forEach(d => d[chart.field] = +d[chart.field]);
+
+        const aggregated = d3.rollups(
+          data,
+          v => d3.sum(v, d => d[chart.field]),
+          d => d.Continent
+        ).map(([Continent, value]) => ({ Continent, value }));
+
+        const x = d3.scaleBand()
+          .domain(aggregated.map(d => d.Continent))
+          .range([0, width])
+          .padding(0.2);
+
+        const y = d3.scaleLinear()
+          .domain([0, d3.max(aggregated, d => d.value)]).nice()
+          .range([height, 0]);
+
+        svg.append("g")
+          .attr("transform", `translate(0,${height})`)
+          .call(d3.axisBottom(x))
+          .selectAll("text")
+          .attr("transform", "rotate(-45)")
+          .style("text-anchor", "end");
+
+        svg.append("g")
+          .call(d3.axisLeft(y));
+
+        svg.selectAll("rect")
+          .data(aggregated)
+          .enter()
+          .append("rect")
+          .attr("x", d => x(d.Continent))
+          .attr("y", d => y(d.value))
+          .attr("width", x.bandwidth())
+          .attr("height", d => height - y(d.value))
+          .attr("fill", chart.color)
+          .on("mouseover", function (event, d) {
+            tooltip.style("visibility", "visible")
+                   .text(`${d.Continent} : ${d.value.toLocaleString()}`);
+            d3.select(this).attr("fill", d3.color(chart.color).darker(0.7));
+          })
+          .on("mousemove", function (event) {
+            tooltip.style("top", (event.pageY - 40) + "px")
+                   .style("left", (event.pageX + 15) + "px");
+          })
+          .on("mouseout", function () {
+            tooltip.style("visibility", "hidden");
+            d3.select(this).attr("fill", chart.color);
+          });
+      });
+    });
+
+    // 📊 GRAPHE COMPARATIF CONTINENTAL
+    const svgComparison = d3.select("#continent-comparison")
+      .append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    d3.csv("data/worldometer_data.csv").then(data => {
+      data.forEach(d => {
+        d.TotalCases = +d.TotalCases;
+        d.TotalDeaths = +d.TotalDeaths;
+        d.TotalRecovered = +d.TotalRecovered;
+      });
+
+      const grouped = d3.rollups(
+        data,
+        v => ({
+          TotalCases: d3.sum(v, d => d.TotalCases),
+          TotalDeaths: d3.sum(v, d => d.TotalDeaths),
+          TotalRecovered: d3.sum(v, d => d.TotalRecovered)
+        }),
+        d => d.Continent
+      ).map(([Continent, values]) => ({ Continent, ...values }));
+
+      const subgroups = ["TotalCases", "TotalDeaths", "TotalRecovered"];
+      const color = d3.scaleOrdinal()
+        .domain(subgroups)
+        .range(["#4a90e2", "#e74c3c", "#2ecc71"]);
+
+      const x0 = d3.scaleBand()
+        .domain(grouped.map(d => d.Continent))
+        .range([0, width])
+        .padding(0.2);
+
+      const x1 = d3.scaleBand()
+        .domain(subgroups)
+        .range([0, x0.bandwidth()])
+        .padding(0.05);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(grouped, d => Math.max(d.TotalCases, d.TotalDeaths, d.TotalRecovered))]).nice()
+        .range([height, 0]);
+
+      svgComparison.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x0))
+        .selectAll("text")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end");
+
+      svgComparison.append("g")
+        .call(d3.axisLeft(y));
+
+      svgComparison.append("g")
+        .selectAll("g")
+        .data(grouped)
+        .enter()
+        .append("g")
+        .attr("transform", d => `translate(${x0(d.Continent)},0)`)
+        .selectAll("rect")
+        .data(d => subgroups.map(key => ({ key, value: d[key] })))
+        .enter()
+        .append("rect")
+        .attr("x", d => x1(d.key))
+        .attr("y", d => y(d.value))
+        .attr("width", x1.bandwidth())
+        .attr("height", d => height - y(d.value))
+        .attr("fill", d => color(d.key))
+        .on("mouseover", function (event, d) {
+          tooltip.style("visibility", "visible")
+                 .text(`${d.key} : ${d.value.toLocaleString()}`);
+          d3.select(this).attr("fill", d3.color(color(d.key)).darker(0.7));
+        })
+        .on("mousemove", function (event) {
+          tooltip.style("top", (event.pageY - 40) + "px")
+                 .style("left", (event.pageX + 15) + "px");
+        })
+        .on("mouseout", function (event, d) {
+          tooltip.style("visibility", "hidden");
+          d3.select(this).attr("fill", color(d.key));
+        });
+    });
+
+    const svgCountries = d3.select("#countries-affected")
+  .append("svg")
+  .attr("width", 700)
+  .attr("height", 350)
+  .append("g")
+  .attr("transform", `translate(${margin.left + 20},${margin.top})`);
+
+d3.csv("data/day_wise.csv").then(data => {
+  const parseDate = d3.timeParse("%Y-%m-%d");
+  data.forEach(d => {
+    d.Date = parseDate(d.Date);
+    d["No. of countries"] = +d["No. of countries"];
+  });
+
+  const x = d3.scaleTime()
+    .domain(d3.extent(data, d => d.Date))
+    .range([0, 600]);
+
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(data, d => d["No. of countries"])]).nice()
+    .range([250, 0]);
+
+  svgCountries.append("g")
+    .attr("transform", `translate(0,250)`)
+    .call(d3.axisBottom(x).ticks(6));
+
+  svgCountries.append("g")
+    .call(d3.axisLeft(y));
+
+  svgCountries.append("text")
+    .attr("transform", "rotate(-90)")
+    .attr("y", -50)
+    .attr("x", -120)
+    .attr("dy", "1em")
+    .style("text-anchor", "middle")
+    .style("fill", "#555")
+    .text("Nombre de pays");
+
+  const line = d3.line()
+    .x(d => x(d.Date))
+    .y(d => y(d["No. of countries"]))
+    .curve(d3.curveMonotoneX); // ➜ courbe fluide sans points
+
+  svgCountries.append("path")
+    .datum(data)
+    .attr("fill", "none")
+    .attr("stroke", "#8e44ad")
+    .attr("stroke-width", 2.5)
+    .attr("d", line)
+    .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))");
+
+  // Légende (optionnelle)
+  svgCountries.append("rect")
+    .attr("x", 500)
+    .attr("y", 0)
+    .attr("width", 10)
+    .attr("height", 10)
+    .attr("fill", "#8e44ad");
+
+  svgCountries.append("text")
+    .attr("x", 515)
+    .attr("y", 10)
+    .text("Pays affectés")
+    .style("font-size", "12px")
+    .attr("alignment-baseline", "middle");
+    // Ajouter une ligne invisible pour capturer les événements de survol
+const focus = svgCountries.append("g")
+  .style("display", "none");
+
+focus.append("line")
+  .attr("id", "hover-line")
+  .attr("stroke", "#aaa")
+  .attr("stroke-width", 1)
+  .attr("y1", 0)
+  .attr("y2", 250);
+
+const tooltipBox = d3.select("body").append("div")
+  .attr("class", "tooltip")
+  .style("visibility", "hidden")
+  .style("position", "absolute")
+  .style("background", "white")
+  .style("padding", "6px 10px")
+  .style("border", "1px solid #ccc")
+  .style("border-radius", "4px")
+  .style("box-shadow", "2px 2px 6px rgba(0, 0, 0, 0.1)")
+  .style("font-size", "14px");
+
+svgCountries.append("rect")
+  .attr("width", 600)
+  .attr("height", 250)
+  .attr("fill", "none")
+  .attr("pointer-events", "all")
+  .on("mouseover", () => {
+    focus.style("display", null);
+    tooltipBox.style("visibility", "visible");
+  })
+  .on("mouseout", () => {
+    focus.style("display", "none");
+    tooltipBox.style("visibility", "hidden");
+  })
+  .on("mousemove", (event) => {
+    const bisectDate = d3.bisector(d => d.Date).left;
+    const x0 = x.invert(d3.pointer(event)[0]);
+    const i = bisectDate(data, x0, 1);
+    const d0 = data[i - 1];
+    const d1 = data[i];
+    const d = x0 - d0.Date > d1.Date - x0 ? d1 : d0;
+
+    const xCoord = x(d.Date);
+    const yCoord = y(d["No. of countries"]);
+
+    focus.select("#hover-line")
+      .attr("x1", xCoord)
+      .attr("x2", xCoord);
+
+    tooltipBox
+      .style("left", `${event.pageX + 20}px`)
+      .style("top", `${event.pageY - 40}px`)
+      .html(`<strong>${d3.timeFormat("%d %b %Y")(d.Date)}</strong><br>Pays affectés : <strong>${d["No. of countries"]}</strong>`);
+  });
+
+});
+
+
+  </script>
+</body>
+</html>

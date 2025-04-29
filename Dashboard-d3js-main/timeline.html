@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Évolution COVID-19</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Roboto', sans-serif; }
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 6px 10px;
+      font-size: 14px;
+      pointer-events: none;
+      visibility: hidden;
+      box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+    }
+    .toggle-metric:checked + span {
+      font-weight: bold;
+      opacity: 1;
+    }
+    .toggle-metric + span {
+      opacity: 0.6;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body class="bg-[#f4f4f9] text-gray-800">
+  <div class="flex">
+    <div id="nav"></div>
+    <main class="ml-64 p-10 w-full">
+      <h1 class="text-2xl font-bold text-blue-600 mb-6">Évolution du COVID-19 (2020)</h1>
+
+      <div class="mb-6 flex flex-wrap gap-4 items-center">
+        <div>
+          <label for="mode-select" class="mr-2 font-semibold">Vue :</label>
+          <select id="mode-select" class="border rounded p-2">
+            <option value="monthly-all">Mensuelle</option>
+            <option value="daily-all">Journalière</option>
+          </select>
+        </div>
+        <div id="month-select-container" class="hidden">
+          <label for="month-select" class="ml-4 mr-2 font-semibold">Mois :</label>
+          <select id="month-select" class="border rounded p-2">
+            <option value="0">Janvier</option>
+            <option value="1">Février</option>
+            <option value="2">Mars</option>
+            <option value="3">Avril</option>
+            <option value="4">Mai</option>
+            <option value="5">Juin</option>
+            <option value="6">Juillet</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded shadow relative">
+        <div id="line-chart"></div>
+        <div class="mt-4 flex gap-6 text-sm font-medium text-gray-600">
+          <label class="flex items-center gap-1">
+            <input type="checkbox" class="toggle-metric accent-[#4a90e2]" data-key="Confirmed" checked>
+            <span class="text-[#4a90e2]">Confirmés</span>
+          </label>
+          <label class="flex items-center gap-1">
+            <input type="checkbox" class="toggle-metric accent-[#e74c3c]" data-key="Deaths" checked>
+            <span class="text-[#e74c3c]">Décès</span>
+          </label>
+          <label class="flex items-center gap-1">
+            <input type="checkbox" class="toggle-metric accent-[#2ecc71]" data-key="Recovered" checked>
+            <span class="text-[#2ecc71]">Guérisons</span>
+          </label>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    fetch('nav.html')
+      .then(res => res.text())
+      .then(data => { document.getElementById('nav').innerHTML = data; });
+
+    const margin = { top: 50, right: 30, bottom: 60, left: 60 },
+          width = 800 - margin.left - margin.right,
+          height = 400 - margin.top - margin.bottom;
+
+    const svg = d3.select("#line-chart")
+      .append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const tooltip = d3.select("#tooltip");
+
+    const modeSelect = document.getElementById("mode-select");
+    const monthSelect = document.getElementById("month-select");
+    const monthSelectContainer = document.getElementById("month-select-container");
+
+    const toggleInputs = () => {
+      return Array.from(document.querySelectorAll(".toggle-metric"))
+        .filter(input => input.checked)
+        .map(input => input.dataset.key);
+    };
+
+    d3.csv("data/day_wise.csv").then(data => {
+  const parseDate = d3.timeParse("%Y-%m-%d");
+  data.forEach(d => {
+    d.Date = parseDate(d.Date);
+    d.Confirmed = +d.Confirmed;
+    d.Deaths = +d.Deaths;
+    d.Recovered = +d.Recovered;
+  });
+
+  modeSelect.addEventListener("change", () => {
+    monthSelectContainer.classList.toggle("hidden", modeSelect.value !== "daily-all");
+    updateChart(modeSelect.value);
+  });
+
+  monthSelect.addEventListener("change", () => updateChart(modeSelect.value));
+  document.querySelectorAll(".toggle-metric").forEach(input => 
+    input.addEventListener("change", () => updateChart(modeSelect.value))
+  );
+
+  updateChart("monthly-all");
+
+  function updateChart(mode) {
+    svg.selectAll("*").remove();
+    const selectedMonth = +monthSelect.value;
+    const visibleKeys = toggleInputs();
+
+    const metrics = [
+      { key: "Confirmed", label: "Confirmés", color: "#4a90e2" },
+      { key: "Deaths", label: "Décès", color: "#e74c3c" },
+      { key: "Recovered", label: "Guérisons", color: "#2ecc71" }
+    ].filter(m => visibleKeys.includes(m.key));
+
+    let lines = [];
+    if (mode === "monthly-all") {
+      metrics.forEach(metric => {
+        const values = d3.rollups(data, v => d3.max(v, d => d[metric.key]), d => d.Date.getMonth())
+          .map(([month, value]) => ({ label: new Date(2020, month).toLocaleString('fr-FR', { month: 'long' }), value }));
+        lines.push({ metric, values });
+      });
+    } else if (mode === "daily-all") {
+      metrics.forEach(metric => {
+        const values = data.filter(d => d.Date.getMonth() === selectedMonth)
+          .map(d => ({ label: d3.timeFormat("%d %b")(d.Date), value: d[metric.key] }));
+        lines.push({ metric, values });
+      });
+    }
+
+    const allLabels = lines.flatMap(line => line.values.map(d => d.label));
+    const x = d3.scalePoint()
+      .domain([...new Set(allLabels)])
+      .range([0, width])
+      .padding(0.5);
+
+    const y = d3.scaleLinear()
+      .domain([0, d3.max(lines.flatMap(line => line.values.map(d => d.value)))]).nice()
+      .range([height, 0]);
+
+    svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x).tickValues(x.domain().filter((d, i) => !(i % 6))))
+      .selectAll("text")
+      .attr("transform", "rotate(-45)")
+      .style("text-anchor", "end");
+
+    svg.append("g").call(d3.axisLeft(y));
+
+    const lineGen = d3.line()
+      .x(d => x(d.label))
+      .y(d => y(d.value));
+
+    lines.forEach(({ metric, values }) => {
+      svg.append("path")
+        .datum(values)
+        .attr("fill", "none")
+        .attr("stroke", metric.color)
+        .attr("stroke-width", 2.5)
+        .attr("d", lineGen)
+        .style("opacity", 0)
+        .transition()
+        .duration(600)
+        .style("opacity", 1);
+
+      // Une seule sélection pour cercles avec animation et événements
+      const circles = svg.selectAll(`circle.${metric.key}`)
+        .data(values)
+        .enter()
+        .append("circle")
+        .attr("class", metric.key)
+        .attr("cx", d => x(d.label))
+        .attr("cy", d => y(d.value))
+        .attr("fill", metric.color)
+        .attr("r", 0)
+        .transition()
+        .duration(500)
+        .attr("r", 4);
+
+      // Ajout des événements (après transition)
+      svg.selectAll(`circle.${metric.key}`)
+        .on("mouseover", (event, d) => {
+          tooltip.style("visibility", "visible")
+            .html(`<strong>${metric.label}</strong><br>${d.label} : ${d.value.toLocaleString()}`);
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("top", (event.pageY - 40) + "px")
+            .style("left", (event.pageX + 15) + "px");
+        })
+        .on("mouseout", () => tooltip.style("visibility", "hidden"));
+    });
+  }
+});
+
+  </script>
+</body>
+</html>
